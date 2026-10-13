@@ -1,0 +1,31 @@
+// Reproducible model assets: pinned revisions, verified SHA-256, phone module only.
+def models = [
+    ['ggml-base.bin', 'ggerganov/whisper.cpp', '5359861c739e955e79d9a303bcbc70fb988958b1', '60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe'],
+    ['ggml-silero-v6.2.0.bin', 'ggml-org/whisper-vad', '9ffd54a1e1ee413ddf265af9913beaf518d1639b', '2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987']
+]
+def assetDirectory = layout.buildDirectory.dir('generated/speechAssets')
+android.sourceSets.main.assets.srcDir(assetDirectory)
+tasks.register('prepareSpeechModels') {
+    inputs.property('modelRevisions', models.toString())
+    outputs.dir(assetDirectory)
+    doLast {
+        def destination = assetDirectory.get().dir('models').asFile
+        destination.mkdirs()
+        models.each { spec ->
+            def cache = rootProject.file('.artifacts/models/' + spec[0])
+            cache.parentFile.mkdirs()
+            if (!cache.exists()) {
+                def partial = new File(cache.parentFile, spec[0] + '.download')
+                def connection = new URL('https://huggingface.co/' + spec[1] + '/resolve/' + spec[2] + '/' + spec[0]).openConnection()
+                connection.connectTimeout = 30000; connection.readTimeout = 120000
+                connection.inputStream.withCloseable { input -> partial.withOutputStream { output -> output << input } }
+                java.nio.file.Files.move(partial.toPath(), cache.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            }
+            def digest = java.security.MessageDigest.getInstance('SHA-256')
+            cache.withInputStream { input -> byte[] buffer = new byte[65536]; int count; while ((count = input.read(buffer)) != -1) digest.update(buffer, 0, count) }
+            if (digest.digest().encodeHex().toString() != spec[3]) throw new GradleException('Speech model checksum mismatch: ' + spec[0])
+            java.nio.file.Files.copy(cache.toPath(), new File(destination, spec[0]).toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        }
+    }
+}
+tasks.named('preBuild').configure { dependsOn 'prepareSpeechModels' }

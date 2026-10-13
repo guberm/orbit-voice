@@ -4,7 +4,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 public class Wire {
     public static final String REQUEST_PATH="/orbit/v1/request", EVENT_PATH="/orbit/v1/event";
-    public static final Set<String> KINDS=new HashSet<>(Arrays.asList("ask","cancel","state","new","history","resume","delta","done","error"));
+    public static final Set<String> KINDS=new HashSet<>(Arrays.asList("ask","audio","transcript","cancel","state","new","history","resume","delta","done","error"));
     public static JsonObject parse(byte[] bytes) {
         try {
             if (bytes.length>60000) throw new IllegalArgumentException("Message too large");

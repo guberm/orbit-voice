@@ -1,0 +1,96 @@
+name: Signed Android release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag
+        required: true
+        default: v0.1.0-alpha.2
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          submodules: recursive
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;28.2.13676358' 'cmake;3.22.1'
+      - uses: actions/cache@v4
+        with:
+          path: .artifacts/models
+          key: orbit-speech-models-v1
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Validate release version
+        run: |
+          VERSION="$(sed -n "s/.*versionName '\([^']*\)'.*/\1/p" gradle/android-app.gradle)"
+          [[ "$VERSION" =~ ^[0-9A-Za-z.-]+$ ]]
+          [[ "$RELEASE_TAG" == "v$VERSION" ]]
+          test -f "docs/releases/$RELEASE_TAG.md"
+          echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
+      - name: Restore release signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_SIGNING_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_SIGNING_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_SIGNING_KEY_PASSWORD }}
+        run: |
+          umask 077
+          test -n "$KEYSTORE_BASE64"
+          test -n "$STORE_PASSWORD"
+          test -n "$KEY_ALIAS"
+          test -n "$KEY_PASSWORD"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/orbit-voice-release.jks"
+          mkdir -p "$HOME/.android"
+          printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+            "$RUNNER_TEMP/orbit-voice-release.jks" "$STORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" \
+            > "$HOME/.android/orbit-voice-signing.properties"
+      - name: Test, lint and build signed APKs
+        run: |
+          chmod +x gradlew
+          ./gradlew :core:test :mobile:testDebugUnitTest :mobile:lintDebug :wear:lintDebug :mobile:assembleRelease :wear:assembleRelease --console plain
+      - name: Verify signatures and package downloads
+        run: |
+          mkdir -p .artifacts/release
+          cp mobile/build/outputs/apk/release/mobile-release.apk ".artifacts/release/orbit-voice-phone-$RELEASE_VERSION.apk"
+          cp wear/build/outputs/apk/release/wear-release.apk ".artifacts/release/orbit-voice-wear-$RELEASE_VERSION.apk"
+          for apk in .artifacts/release/*.apk; do
+            "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$apk" | tee "$RUNNER_TEMP/orbit-certificate.txt"
+            grep -F '5a6ddb109e098abe07368a587bcd64cea464dcf314c4b565bf26bbee5fc559f5' "$RUNNER_TEMP/orbit-certificate.txt"
+          done
+          (cd .artifacts/release && sha256sum *.apk > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: orbit-voice-${{ env.RELEASE_TAG }}
+          path: .artifacts/release/
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=()
+          if [[ "$RELEASE_VERSION" == *alpha* || "$RELEASE_VERSION" == *beta* || "$RELEASE_VERSION" == *rc* ]]; then
+            flags+=(--prerelease)
+          fi
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" .artifacts/release/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$RELEASE_TAG" .artifacts/release/* --repo "$GITHUB_REPOSITORY" \
+              --verify-tag --title "Orbit Voice $RELEASE_VERSION" \
+              --notes-file "docs/releases/$RELEASE_TAG.md" "${flags[@]}"
+          fi
+      - name: Remove temporary signing files
+        if: always()
+        run: rm -f -- "$RUNNER_TEMP/orbit-voice-release.jks" "$HOME/.android/orbit-voice-signing.properties"

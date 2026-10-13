@@ -60,4 +60,20 @@ public final class PipelineTest {
         server.enqueue(new MockResponse().setBody(success("Answer")).setBodyDelay(3,TimeUnit.SECONDS));String id=UUID.randomUUID().toString();CountDownLatch done=new CountDownLatch(1);
         assertTrue(engine.ask(Wire.message("ask",id,account.key,repo.current(account).id,0,"Question"),e->{},done::countDown));assertNotNull(server.takeRequest(5,TimeUnit.SECONDS));engine.cancel(id);assertTrue(done.await(5,TimeUnit.SECONDS));assertTrue(repo.current(account).turns.isEmpty());
     }
+    @Test public void recognizedRussianIsSentWithLanguageAndSavedAsContext() throws Exception {
+        engine.worker.shutdownNow();engine=new Engine(repo,api,(pcm,cancelled)->new WhisperAsr.Result("Меня зовут Михаил","ru"));
+        server.enqueue(new MockResponse().setBody(success("Привет, Михаил.")));CountDownLatch done=new CountDownLatch(1);List<JsonObject> events=new CopyOnWriteArrayList<>();String conversation=repo.current(account).id;
+        assertTrue(engine.askAudio(Wire.message("audio",UUID.randomUUID().toString(),account.key,conversation,0,""),new byte[32000],events::add,done::countDown));assertTrue(done.await(8,TimeUnit.SECONDS));
+        assertEquals("transcript",JwtVerifier.value(events.get(0),"kind"));assertEquals("ru",JwtVerifier.value(events.get(0),"language"));
+        RecordedRequest next=server.takeRequest(2,TimeUnit.SECONDS);assertNotNull(next);assertTrue(next.getBody().readUtf8().contains("Меня зовут Михаил"));assertEquals("Меня зовут Михаил",repo.current(account).turns.get(0).question);
+    }
+    @Test public void silentAudioDoesNotCallTheNetwork() throws Exception {
+        engine.worker.shutdownNow();engine=new Engine(repo,api,(pcm,cancelled)->new WhisperAsr.Result("",""));CountDownLatch done=new CountDownLatch(1);List<JsonObject> events=new CopyOnWriteArrayList<>();
+        assertTrue(engine.askAudio(Wire.message("audio",UUID.randomUUID().toString(),account.key,repo.current(account).id,0,""),new byte[32000],events::add,done::countDown));assertTrue(done.await(5,TimeUnit.SECONDS));assertEquals(0,server.getRequestCount());assertEquals("transcript",JwtVerifier.value(events.get(0),"kind"));assertTrue(repo.current(account).turns.isEmpty());
+    }
+    @Test public void cancellationBeforeAudioArrivesPreventsInference() throws Exception {
+        engine.worker.shutdownNow();java.util.concurrent.atomic.AtomicBoolean decoded=new java.util.concurrent.atomic.AtomicBoolean();engine=new Engine(repo,api,(pcm,cancelled)->{decoded.set(true);return new WhisperAsr.Result("Question","en");});
+        String id=UUID.randomUUID().toString();engine.cancel(id);CountDownLatch done=new CountDownLatch(1);
+        assertTrue(engine.askAudio(Wire.message("audio",id,account.key,repo.current(account).id,0,""),new byte[32000],e->{},done::countDown));assertTrue(done.await(5,TimeUnit.SECONDS));assertFalse(decoded.get());assertEquals(0,server.getRequestCount());
+    }
 }

@@ -1,7 +1,37 @@
 # Verification evidence
 
-Local checks performed on October 12, 2026. This document distinguishes tested
-application behavior from account/device integration that still needs a real user.
+This document distinguishes tested application behavior from account/device
+integration that still needs a real user.
+
+## 0.1.0-alpha.2 checkpoint (October 13, 2026)
+
+Offline multilingual recognition replaced the native automatic-language route, whose
+failure on physical devices is recorded in the [voice architecture research](research/voice-architecture-2026-10-13.md).
+
+| Check | Actual result |
+| --- | --- |
+| JVM core tests | 38 passed. OAuth/PKCE, signed JWT identity, SSE completion/errors, conversation replay, speech chunking, stale-response rejection, the watch speech endpoint and the audio wire format. |
+| Android instrumented tests | 26 passed on a physical Pixel 9 Pro XL, Android 17. Includes the offline audio pipeline, Russian → English → Russian switching on recorded samples, silence handling, cancellation, encrypted storage and phone UI. |
+| Speech endpoint regression | The shipped 0.1.0-alpha.1 threshold logic fails two regression tests (`.artifacts-endpoint-red.log`); the shipped logic passes all five (`.artifacts-endpoint-green.log`). |
+| Offline recognition on real hardware | Russian speech recorded on a Pixel Watch 3 (`capture frames=382 peakRms=526 speech=true bytes=54400`) was transcribed to Cyrillic on the phone and shown on the watch. The same phrase spoken into the phone transcribed correctly once the phone's speech language was set to Automatic. |
+| Recognition timing | 1.92 s of a real utterance decoded in 2.30 s on a Pixel 9 Pro XL (`OrbitAsr: decode samples=30720 threads=4 ms=2297`); watch to phone audio transfer about 1.2 s; model load from disk about 0.3 s. |
+| Thread scaling | The same recorded-sample test took 11.9 s with 4 decode threads and 13.0 s with 6, so the shipped build keeps 4. |
+| Lint and release builds | Both lint tasks and signed release builds passed; both APKs carry the alpha.1 certificate. |
+| Blocked | The assistant's answer half of the loop could not be checked in this build: the account's ChatGPT plan limit was reached, and the app reported the usage-limit error on both devices. |
+
+Not verified live in this checkpoint:
+
+- A complete spoken dialogue, from speech to a spoken assistant answer, on paired
+  physical devices.
+- Mid-conversation Russian ↔ English switching on the watch, and names, numbers and
+  short answers.
+- Screen-off and lock behaviour, Tile host rendering, and latency or battery
+  measurements across a longer conversation.
+
+## 0.1.0-alpha.1 checkpoint (October 12, 2026)
+
+Local checks performed on October 12, 2026. This is the original release checkpoint;
+the offline recognition pipeline above did not exist yet.
 
 | Check | Actual result |
 | --- | --- |

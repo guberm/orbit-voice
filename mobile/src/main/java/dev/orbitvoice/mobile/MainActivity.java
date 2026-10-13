@@ -15,7 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 public final class MainActivity extends ComponentActivity {
-    private Engine engine;private VoiceSession voice;private AuthFlow auth;private boolean atHome;
+    private Engine engine;private VoiceSession voice;private AuthFlow auth;private boolean atHome,foreground;
     private TextView status,transcript;private Button talkButton;private String turnId="",exportText="";private Wire.Gate gate;
     private final Handler main=new Handler(Looper.getMainLooper());
     @Override public void onCreate(Bundle state) {
@@ -23,6 +23,7 @@ public final class MainActivity extends ComponentActivity {
         try { engine=Engine.get(this); }catch(IOException e) { LinearLayout col=Ui.screen(this,false);Ui.title(col,"Local storage unavailable",false);Ui.text(col,e.getMessage(),16,Ui.MUTED);return; }
         voice=new VoiceSession(this,new VoiceSession.Listener() {
             public void heard(String question) { sendQuestion(question); }
+            public void audio(byte[] pcm){sendTurn("",pcm);}
             public void status(String text) { if(status!=null)status.setText(text);if(voice!=null&&voice.active())getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);else getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(talkButton!=null)talkButton.setText(voice!=null&&voice.active()?"Interrupt and talk":"Start talking"); }
             public void transcript(String text) { if(transcript!=null)transcript.setText(text); }
             public void cancel() { if(!turnId.isEmpty())engine.cancel(turnId);turnId="";gate=null; }
@@ -55,7 +56,8 @@ public final class MainActivity extends ComponentActivity {
         if(engine.busy()) { Ui.dialog(this,"Conversation in progress","Stop the current turn before connecting an account.");return; }
         if(auth!=null)auth.close();
         try {
-            auth=new AuthFlow(engine.repo,returning,engine.api,new AuthFlow.Listener() {
+            auth=new AuthFlow(engine.repo.config.hostId,engine.repo,returning,engine.api,getPackageName(),new AuthFlow.Listener() {
+                public void received(){main.post(()->{if(!isDestroyed()&&foreground&&auth!=null)auth.complete();});}
                 public void done(Repository.Account a) { main.post(()->{if(isDestroyed())return;auth=null;home();models();}); }
                 public void failed(String text) { main.post(()->{if(isDestroyed())return;auth=null;home();Ui.dialog(MainActivity.this,"Sign-in not completed",text);}); }
             });
@@ -91,8 +93,8 @@ public final class MainActivity extends ComponentActivity {
         Ui.button(col,"Back",false,this::home);
     }
     private void language() {
-        String[] labels={"System language","English","Russian","Spanish","French","German"},tags={"","en-US","ru-RU","es-ES","fr-FR","de-DE"};
-        new AlertDialog.Builder(this).setTitle("Speech language").setItems(labels,(d,w)->{getPreferences(0).edit().putString("language",tags[w]).apply();voice.language(tags[w]);Ui.dialog(this,"Speech language",labels[w]+" selected. The installed speech services must support this language.");}).show();
+        String[] labels={"Automatic (offline language detection)","System speech service","English speech service","Russian speech service","Spanish speech service","French speech service","German speech service"},tags={"","system","en-US","ru-RU","es-ES","fr-FR","de-DE"};
+        new AlertDialog.Builder(this).setTitle("Speech language").setItems(labels,(d,w)->{getPreferences(0).edit().putString("language",tags[w]).apply();voice.language(tags[w]);Ui.dialog(this,"Speech language",labels[w]+" selected. Automatic uses offline multilingual recognition on your phone. Other options use the installed speech service.");}).show();
     }
     private void conversation() {
         clearScreen();Repository.Account a=engine.repo.active();
@@ -104,11 +106,16 @@ public final class MainActivity extends ComponentActivity {
         Ui.button(col,"Back",false,this::home);
     }
     private void sendQuestion(String question) {
+        sendTurn(question,null);
+    }
+    private void sendTurn(String question,byte[] pcm) {
         try {
             Repository.Account a=engine.repo.active();Conversation c=engine.repo.current(a);turnId=UUID.randomUUID().toString();gate=new Wire.Gate(turnId,a.key,c.id);
-            if(!engine.ask(Wire.message("ask",turnId,a.key,c.id,0,question),event->main.post(()->{
-                if(gate==null||!gate.accepts(event))return;String kind=JwtVerifier.value(event,"kind"),text=JwtVerifier.value(event,"text");if(kind.equals("error"))voice.fail(text);else voice.update(text,kind.equals("done"));
-            }),()->{}))voice.fail("Another turn is still running. Tap to try again in a moment.");
+            java.util.function.Consumer<JsonObject> events=event->main.post(()->{
+                if(gate==null||!gate.accepts(event))return;String kind=JwtVerifier.value(event,"kind"),text=JwtVerifier.value(event,"text");if(kind.equals("error"))voice.fail(text);else if(kind.equals("transcript"))voice.recognized(text,JwtVerifier.value(event,"language"));else voice.update(text,kind.equals("done"));
+            });JsonObject request=Wire.message(pcm==null?"ask":"audio",turnId,a.key,c.id,0,question);
+            boolean accepted=pcm==null?engine.ask(request,events,()->{}):engine.askAudio(request,pcm,events,()->{});
+            if(!accepted)voice.fail("Another turn is still running. Tap to try again in a moment.");
         }catch(Exception e){voice.fail(Engine.friendly(e));}
     }
     private void histories() {
@@ -133,5 +140,8 @@ public final class MainActivity extends ComponentActivity {
         if(code==805&&result==RESULT_OK&&data!=null&&data.getData()!=null)try(OutputStream out=getContentResolver().openOutputStream(data.getData())){if(out==null)throw new IOException();out.write(exportText.getBytes(StandardCharsets.UTF_8));Ui.dialog(this,"Export saved","Conversation saved to the location you selected.");}catch(IOException e){Ui.dialog(this,"Export failed","Could not write the selected file. Try a different destination.");}finally{exportText="";}
     }
     @Override protected void onStop() { if(voice!=null&&!voice.inExternalRecognizer())voice.pause("Paused while app is in the background");super.onStop(); }
+    @Override protected void onResume(){super.onResume();foreground=true;if(auth!=null)auth.complete();}
+    @Override protected void onPause(){foreground=false;super.onPause();}
+    @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);if(auth!=null&&foreground)auth.complete();}
     @Override protected void onDestroy() { if(auth!=null)auth.close();if(voice!=null)voice.close();main.removeCallbacksAndMessages(null);super.onDestroy(); }
 }

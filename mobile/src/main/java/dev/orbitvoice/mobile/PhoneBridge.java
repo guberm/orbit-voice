@@ -8,6 +8,13 @@ import dev.orbitvoice.core.*;
 import java.util.concurrent.TimeUnit;
 
 public final class PhoneBridge extends WearableListenerService {
+    @Override public void onChannelOpened(ChannelClient.Channel channel){
+        if(!channel.getPath().startsWith(AudioWire.PATH+"/"))return;
+        try{
+            java.util.UUID.fromString(channel.getPath().substring(AudioWire.PATH.length()+1));
+            startForegroundService(new Intent(this,InferenceService.class).putExtra("channel",channel));
+        }catch(RuntimeException e){Wearable.getChannelClient(this).close(channel);}
+    }
     static void send(Context c,String node,JsonObject message) {
         try { Tasks.await(Wearable.getMessageClient(c).sendMessage(node,Wire.EVENT_PATH,Wire.bytes(message)),8,TimeUnit.SECONDS); }
         catch(Exception e) { throw new IllegalStateException("Watch disconnected"); }

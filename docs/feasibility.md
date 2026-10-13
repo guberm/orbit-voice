@@ -2,6 +2,10 @@
 
 Checked on October 12, 2026 against official OpenAI and Android documentation.
 
+October 13 update: see [automatic-language and continued-conversation research](research/voice-architecture-2026-10-13.md)
+for the physical-device recognition failure, current integration boundary, and proposed replacement.
+The verification section below describes the original October 12 checkpoint.
+
 ## Requested product
 
 A Wear OS voice assistant with spoken questions and answers, multi-turn conversation,

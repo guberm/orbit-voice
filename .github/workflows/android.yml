@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -19,16 +21,21 @@ jobs:
         with:
           packages: platform-tools
           log-accepted-android-sdk-licenses: false
-      - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;28.2.13676358' 'cmake;3.22.1'
+      - uses: actions/cache@v4
+        with:
+          path: .artifacts/models
+          key: orbit-speech-models-v1
       - uses: gradle/actions/setup-gradle@v4
       - run: chmod +x gradlew
-      - run: ./gradlew :core:test :mobile:lintDebug :wear:lintDebug :mobile:assembleDebug :wear:assembleDebug --console plain
+      - run: ./gradlew :core:test :mobile:testDebugUnitTest :mobile:lintDebug :wear:lintDebug :mobile:assembleDebug :wear:assembleDebug --console plain
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: android-checks-and-debug-apks
           path: |
             core/build/reports/tests/
+            mobile/build/reports/tests/
             mobile/build/reports/
             wear/build/reports/
             mobile/build/outputs/apk/debug/*.apk

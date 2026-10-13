@@ -13,6 +13,7 @@ import java.util.*;
 public final class MainActivity extends Activity implements MessageClient.OnMessageReceivedListener {
     private String phone="",account="",conversation="",turnId="",controlId="";
     private Wire.Gate gate;private VoiceSession voice;private TextView status,transcript;private Button talk;
+    private AudioTransfer audioTransfer;
     private boolean started,autoStart;
     private final Handler main=new Handler(Looper.getMainLooper());
     private final Runnable timeout=()->{if(voice!=null)voice.fail("Phone did not respond. Check the connection, then refresh.");};
@@ -26,10 +27,12 @@ public final class MainActivity extends Activity implements MessageClient.OnMess
         transcript=new TextView(this);transcript.setTextSize(12);transcript.setTextColor(Ui.MUTED);transcript.setGravity(android.view.Gravity.CENTER);body.addView(transcript,new ScrollView.LayoutParams(-1,-2));
         voice=new VoiceSession(this,new VoiceSession.Listener() {
             public void heard(String question) { ask(question); }
+            public void audio(byte[] pcm){askAudio(pcm);}
             public void status(String text) { status.setText(text);if(voice!=null&&voice.active())getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);else getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(talk!=null)talk.setText(voice!=null&&voice.active()?"Stop talking":"Start talking"); }
             public void transcript(String text) { transcript.setText(text); }
             public void cancel() {
                 main.removeCallbacks(timeout);
+                if(audioTransfer!=null){audioTransfer.close();audioTransfer=null;}
                 if(!turnId.isEmpty())send(Wire.message("cancel",turnId,account,conversation,0,""),false);
                 turnId="";gate=null;
             }
@@ -51,7 +54,7 @@ public final class MainActivity extends Activity implements MessageClient.OnMess
             case 2:control("history");break;
             case 3:control("new");break;
             case 4:discover();break;
-            case 5:String[] labels={"System","English","Russian","Spanish","French","German"},tags={"","en-US","ru-RU","es-ES","fr-FR","de-DE"};
+            case 5:String[] labels={"Automatic (detect language)","System speech service","English speech service","Russian speech service","Spanish speech service","French speech service","German speech service"},tags={"","system","en-US","ru-RU","es-ES","fr-FR","de-DE"};
                 new AlertDialog.Builder(this).setTitle("Speech language").setItems(labels,(dialog,index)->{voice.pause("Language changed");voice.language(tags[index]);getPreferences(0).edit().putString("language",tags[index]).apply();}).show();break;
         }
     }).show();}
@@ -76,6 +79,13 @@ public final class MainActivity extends Activity implements MessageClient.OnMess
         turnId=UUID.randomUUID().toString();gate=new Wire.Gate(turnId,account,conversation);send(Wire.message("ask",turnId,account,conversation,0,question),true);
         main.removeCallbacks(timeout);main.postDelayed(timeout,170000);
     }
+    private void askAudio(byte[] pcm){
+        if(phone.isEmpty()||account.isEmpty()||conversation.isEmpty()){voice.fail("Phone setup is incomplete. Refresh the connection.");return;}
+        if(audioTransfer!=null)audioTransfer.close();turnId=UUID.randomUUID().toString();String expected=turnId;
+        gate=new Wire.Gate(turnId,account,conversation);JsonObject request=Wire.message("audio",turnId,account,conversation,0,"");
+        audioTransfer=new AudioTransfer(this,phone,request,pcm,()->main.post(()->{if(started&&expected.equals(turnId))voice.fail("Audio transfer failed. Check your phone connection and try again.");}));
+        main.removeCallbacks(timeout);main.postDelayed(timeout,170000);
+    }
     private void send(JsonObject m,boolean reportFailure) {
         if(phone.isEmpty())return;
         try { Wearable.getMessageClient(this).sendMessage(phone,Wire.REQUEST_PATH,Wire.bytes(m)).addOnFailureListener(e->{if(started&&reportFailure)voice.fail("Phone disconnected. Refresh the connection and try again.");}); }
@@ -97,6 +107,7 @@ public final class MainActivity extends Activity implements MessageClient.OnMess
             }
             if(gate==null||!gate.accepts(m))return;
             if(kind.equals("error")){main.removeCallbacks(timeout);voice.fail(text);return;}
+            if(kind.equals("transcript")){voice.recognized(text,JwtVerifier.value(m,"language"));if(text.isEmpty()){main.removeCallbacks(timeout);turnId="";gate=null;}return;}
             if(kind.equals("delta")||kind.equals("done")){if(kind.equals("done"))main.removeCallbacks(timeout);voice.update(text,kind.equals("done"));}
         });
     }
