@@ -19,7 +19,7 @@ public final class MainActivity extends ComponentActivity {
     private TextView status,transcript;private Button talkButton;private String turnId="",exportText="";private Wire.Gate gate;
     private final Handler main=new Handler(Looper.getMainLooper());
     @Override public void onCreate(Bundle state) {
-        super.onCreate(state);
+        super.onCreate(state);InferenceService.arm(this);
         try { engine=Engine.get(this); }catch(IOException e) { LinearLayout col=Ui.screen(this,false);Ui.title(col,"Local storage unavailable",false);Ui.text(col,e.getMessage(),16,Ui.MUTED);return; }
         voice=new VoiceSession(this,new VoiceSession.Listener() {
             public void heard(String question) { sendQuestion(question); }

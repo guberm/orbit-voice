@@ -11,6 +11,9 @@ tasks.register('prepareSpeechModels') {
     doLast {
         def destination = assetDirectory.get().dir('models').asFile
         destination.mkdirs()
+        // A previous spec can leave its model behind, and the stale file would be packaged as well.
+        def expected = models.collect { it[0] } as Set
+        destination.listFiles()?.each { if (!expected.contains(it.name)) { println 'Removing stale speech asset ' + it.name; it.delete() } }
         models.each { spec ->
             def cache = rootProject.file('.artifacts/models/' + spec[0])
             cache.parentFile.mkdirs()

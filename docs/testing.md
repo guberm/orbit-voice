@@ -3,6 +3,30 @@
 This document distinguishes tested application behavior from account/device
 integration that still needs a real user.
 
+## Companion residency, watch surfaces and recognition fixes (October 13, 2026)
+
+Added after the 0.1.0-alpha.2 checkpoint; not tagged as a release.
+
+| Check | Actual result |
+| --- | --- |
+| JVM core tests | 40 passed (`:core:test`). The speech endpoint set now covers a quiet utterance barely above the room noise (it must open a turn and must not be cut short), obvious silence (never opens one), a tap (not an utterance) and the ten-second cap on a noisy room. |
+| Phone residency without the UI | After installing the phone APK with its UI never opened, the update broadcast armed `InferenceService` (`isForeground=true`, `types=0x00000010` connectedDevice) while the launcher held the foreground. |
+| Watch session with the phone app closed | Launching exactly what the tile and the watch-face shortcut launch produced `Listening...` plus the account and model on the watch, supplied by the resident phone service. |
+| Watch-face shortcut | `VoiceShortcutService` installs with `com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER` and the wear manifest declares `SUPPORTED_TYPES=ICON,SMALL_IMAGE,SHORT_TEXT,LONG_TEXT`. Placing it in a watch-face slot is the user's step; Wear has no programmatic add-tile or add-complication API. |
+| Russian speech on the watch | Real watch audio transcribed correctly: `decode samples=42880 ms=4080` then `decoded lang=ru chars=15` ("Проверка связи."), followed by a spoken Russian answer ("Слышу тебя хорошо, связь в порядке."). |
+| Measured cost of one turn | transfer 0.15-1.0 s; decoding 3.7-4.1 s for 2.7-3.7 s of audio; OpenAI first token 2.8-4.1 s, completion 2.9-4.8 s; speech engine start 2.6 s (5.2 s before the voice was pre-warmed when the transcript language arrives). |
+| Defects found and fixed in this pass | (1) the audio path called `Engine.askAudio` on a null engine, so a watch turn hung with no reply; (2) a tile or shortcut launch failed with "Speech output is not ready" while TextToSpeech was still binding; (3) a relaunch while the task was open ignored `start_voice` (no `onNewIntent`); (4) trimming the captured tail by the silence counter discarded the loudest speech frames - the capture log counted speech while the payload sent was silence; (5) the onset gate reset on every sub-threshold frame, so quiet speech never opened a turn and its frames were dropped by the 0.3 s pre-roll - now the pre-roll keeps three seconds and the gate decays instead of resetting; (6) `VoiceSession.pause()` ran speech-engine calls on the UI thread and produced launch ANRs. |
+| Privacy | The diagnostic audio dump and the recognized-text logcat line used while measuring were removed before the final build; recordings stay in memory and only recognized text is stored. |
+
+Still unverified in this build:
+
+- A complete spoken dialogue without pauses: recognition and the answer both work, but latency
+  (about 10 s end to end) has not been reduced to conversational speed.
+- The boot path: `adb shell am broadcast` cannot send the protected `BOOT_COMPLETED` action, so
+  only the `MY_PACKAGE_REPLACED` arming path is proven.
+- Watch-face shortcut rendering by a real watch face, and the tile inside the carousel.
+- Latency, battery and thermal behaviour across a longer conversation.
+
 ## 0.1.0-alpha.2 checkpoint (October 13, 2026)
 
 Offline multilingual recognition replaced the native automatic-language route, whose

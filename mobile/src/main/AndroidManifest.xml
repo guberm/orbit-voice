@@ -1,6 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- connectedDevice keeps the companion link resident: unlike dataSync it has no daily runtime cap. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <application android:label="Orbit Voice" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher" android:theme="@style/OrbitTheme" android:allowBackup="false" android:fullBackupContent="@xml/no_backup" android:dataExtractionRules="@xml/no_transfer" android:usesCleartextTraffic="false" android:supportsRtl="true">
         <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTask">
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
@@ -10,6 +13,12 @@
             <intent-filter><action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" /><data android:scheme="wear" android:host="*" android:pathPrefix="/orbit/v1/request" /></intent-filter>
             <intent-filter><action android:name="com.google.android.gms.wearable.CHANNEL_EVENT" /><data android:scheme="wear" android:host="*" android:pathPrefix="/orbit/v1/audio" /></intent-filter>
         </service>
-        <service android:name=".InferenceService" android:exported="false" android:foregroundServiceType="dataSync" />
+        <service android:name=".InferenceService" android:exported="false" android:foregroundServiceType="connectedDevice" />
+        <receiver android:name=".BootReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

@@ -26,7 +26,7 @@ treating this as a production app.
   speech service configured for one explicit language.
 - HTTP/SSE streaming with sentence-by-sentence TextToSpeech output.
 - Automatic next-turn listening after speech playback, with interrupt and stop controls.
-- A Wear OS Tile that opens the foreground conversation screen.
+- A Wear OS Tile and a watch-face shortcut (complication) that open the conversation screen and start listening.
 - Available models loaded from the signed-in account, rather than a fixed model name.
 - Multiple account registrations with separate encrypted conversation histories.
 - Resume, delete and export conversations as Markdown on the phone.
@@ -43,7 +43,9 @@ streaming. Choosing the system speech service for one fixed language switches
 recognition back to Android's installed recognizer. It does **not** use ChatGPT's
 native Voice mode or claim Realtime Audio access through the ChatGPT sign-in grant.
 There is no always-listening wake word. Leaving the conversation screen stops the
-app's microphone and playback.
+app's microphone and playback. The paired phone keeps a resident companion service, so the
+watch keeps answering while the phone app is closed; an ongoing low-priority notification
+shows that it is ready.
 
 History stays on your Android phone. It does **not** appear in the ChatGPT website
 or official mobile app. The documented open-source sign-in flow requires
@@ -70,7 +72,8 @@ hearing an answer.
    recognition, or pick the system speech service for one fixed language.
 7. On the watch, open Orbit Voice, use **Options → Refresh connection**, and tap
    **Start talking**. Grant microphone permission when prompted.
-8. Add the Orbit Voice Tile from the watch's tile selector for quick launch.
+8. Add the Orbit Voice Tile from the watch's tile selector, or place the Orbit Voice
+   shortcut (complication) on your watch face for one-tap launch.
 
 The first browser sign-in is on the phone. Questions and answers need no keyboard
 input. The phone supplies the OpenAI network connection; the watch app is not standalone.
@@ -151,7 +154,7 @@ incomplete and interrupted requests do not become successful saved turns.
 | Symptom | Action |
 | --- | --- |
 | No phone connected | Install the phone APK, confirm Wear OS pairing, and use Refresh connection. |
-| Open phone once message | Open Orbit Voice on the phone, then retry. Android may restrict starting a foreground service from the background. |
+| Open phone once message | The companion service is not resident yet: open Orbit Voice once on the phone, then retry from the watch. It stays resident afterwards, including across reboots. |
 | Models unavailable | Check account eligibility, plan-sharing consent and ChatGPT Settings → Usage. |
 | Authorization expired | Reconnect the selected account on the phone. |
 | Russian speech returns Latin-script text | Set Speech language to Automatic for offline recognition, or pick the Russian system speech service. |

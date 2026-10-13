@@ -6,6 +6,7 @@ import android.content.*;
 import android.content.pm.PackageManager;
 import android.media.*;
 import android.os.*;
+import android.util.Log;
 import android.speech.*;
 import android.speech.tts.*;
 import dev.orbitvoice.core.SpeechBuffer;
@@ -17,16 +18,22 @@ public final class VoiceSession implements AutoCloseable {
     public static final int PERMISSION=803, RECOGNITION=804;
     private final Activity activity;private final Listener listener;private final Handler main=new Handler(Looper.getMainLooper());
     private final TextToSpeech tts;private final AudioManager audio;
+    // Speech engine and recognizer calls are binder calls that can block for seconds on Wear OS.
+    private final java.util.concurrent.ExecutorService worker=java.util.concurrent.Executors.newSingleThreadExecutor();
     private SpeechRecognizer recognizer;private SpeechBuffer buffer=new SpeechBuffer();private AudioFocusRequest focus;
     private AudioCapture capture;
-    private boolean ttsReady,active,external,thinking,listening,closed;
+    private boolean ttsReady,active,external,thinking,listening,closed,awaitingTts,warmed;
     private String generation=UUID.randomUUID().toString(),externalGeneration="",preference="";private Locale locale=Locale.getDefault();private int silence;private boolean modelDownloadAttempted;
     public VoiceSession(Activity activity,Listener listener) {
         this.activity=activity;this.listener=listener;audio=(AudioManager)activity.getSystemService(Context.AUDIO_SERVICE);
-        tts=new TextToSpeech(activity,status->{ttsReady=status==TextToSpeech.SUCCESS;});
+        tts=new TextToSpeech(activity,status->{
+            ttsReady=status==TextToSpeech.SUCCESS;
+            if(ttsReady&&awaitingTts){awaitingTts=false;main.post(this::start);}
+            else if(!ttsReady&&awaitingTts){awaitingTts=false;listener.status("Speech output is not available. Install or enable a Text-to-Speech engine, then try again.");}
+        });
         tts.setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build());
         tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
-            @Override public void onStart(String id) { }
+            @Override public void onStart(String id) { Log.i("OrbitVoice","speak start ms="+System.currentTimeMillis()); }
             @Override public void onDone(String id) { main.post(()->{
                 if(active && id.equals(generation+":done")) { abandonFocus();thinking=false;listener.status("Your turn");String expected=generation;main.postDelayed(()->{if(active&&generation.equals(expected))listen();},500); }
             }); }
@@ -39,16 +46,20 @@ public final class VoiceSession implements AutoCloseable {
     public void start() {
         if(closed)return;
         if(activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED) { activity.requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},PERMISSION);return; }
-        if(!ttsReady) { listener.status("Speech output is not ready. Install or enable a Text-to-Speech engine, then try again.");return; }
+        // A launch from the tile can arrive before the speech engine finished binding; wait instead of failing.
+        if(!ttsReady) { awaitingTts=true;listener.status("Starting speech output…");main.postDelayed(()->{if(awaitingTts&&!ttsReady){awaitingTts=false;listener.status("Speech output is not ready. Install or enable a Text-to-Speech engine, then try again.");}},6000);return; }
         int available=tts.setLanguage(locale);
         if(available==TextToSpeech.LANG_MISSING_DATA || available==TextToSpeech.LANG_NOT_SUPPORTED) { listener.status("This speech language is unavailable. Install its voice or choose another language.");return; }
         if(active)interrupt();else { active=true;silence=0;generation=UUID.randomUUID().toString();listen(); }
     }
+    /** Synthesizing one silent character now means the first real sentence starts immediately. */
+    private void warm(){if(warmed||!ttsReady)return;warmed=true;try{tts.speak(" ",TextToSpeech.QUEUE_ADD,null,"warm");}catch(RuntimeException ignored){}}
     private void listen() {
         if(!active||closed)return;
         // A destroyed recognizer may still deliver errors. Each listen owns a fresh epoch.
         generation=UUID.randomUUID().toString();
         thinking=false;listening=true;listener.status("Listening…");String listeningGeneration=generation;
+        warm();
         if(SpeechOptions.automatic(preference)){
             capture=new AudioCapture(new AudioCapture.Listener(){
                 public void complete(byte[] pcm){if(!active||!generation.equals(listeningGeneration))return;capture=null;listening=false;thinking=true;buffer=new SpeechBuffer();listener.status("Recognizing language…");listener.audio(pcm);}
@@ -102,14 +113,18 @@ public final class VoiceSession implements AutoCloseable {
     }
     public void update(String text,boolean completed) {
         if(!active||!thinking)return;
+        Log.i("OrbitVoice","answer chars="+text.length()+" ms="+System.currentTimeMillis());
         listener.transcript(text);
         try {
             for(String sentence:buffer.update(text,completed)) {
                 if(SpeechOptions.automatic(preference)){
                     Locale output=SpeechOptions.outputLanguage(sentence,locale);
-                    int supported=tts.setLanguage(output);
-                    if(supported==TextToSpeech.LANG_MISSING_DATA||supported==TextToSpeech.LANG_NOT_SUPPORTED){fail("The detected language needs an installed Text-to-Speech voice.");return;}
-                    locale=output;
+                    // Switching the engine's voice per sentence costs seconds; only switch when it really changes.
+                    if(!output.equals(locale)){
+                        int supported=tts.setLanguage(output);
+                        if(supported==TextToSpeech.LANG_MISSING_DATA||supported==TextToSpeech.LANG_NOT_SUPPORTED){fail("The detected language needs an installed Text-to-Speech voice.");return;}
+                        locale=output;
+                    }
                 }
                 if(focus==null) {
                     focus=new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT).setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()).setOnAudioFocusChangeListener(change->{if(change==AudioManager.AUDIOFOCUS_LOSS || change==AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)main.post(()->pause("Audio interrupted. Tap to continue."));}).build();
@@ -123,17 +138,31 @@ public final class VoiceSession implements AutoCloseable {
     }
     public void recognized(String text,String language){
         if(!active||!thinking)return;
+        Log.i("OrbitVoice","transcript chars="+text.length()+" lang="+language+" ms="+System.currentTimeMillis());
         if(text.trim().isEmpty()){thinking=false;listener.status("Listening for your next turn…");String expected=generation;main.postDelayed(()->{if(active&&generation.equals(expected))listen();},300);return;}
-        if(language!=null&&!language.isEmpty())locale=Locale.forLanguageTag(language);listener.transcript(text);listener.status("Thinking…");
+        if(language!=null&&!language.isEmpty()){
+            Locale heard=Locale.forLanguageTag(language);
+            // Load the voice for the language we actually heard while the model is still answering,
+            // instead of paying the engine's voice switch once the answer is ready to speak.
+            if(!heard.equals(locale)){locale=heard;warmed=false;tts.setLanguage(locale);warm();}
+        }
+        listener.transcript(text);listener.status("Thinking…");
     }
     public void fail(String message) { pause(message); }
     public void interrupt() { pause("Ready");active=true;silence=0;generation=UUID.randomUUID().toString();listen(); }
     public void pause(String message) {
-        active=false;thinking=false;listening=false;generation=UUID.randomUUID().toString();main.removeCallbacksAndMessages(null);
-        if(recognizer!=null) { recognizer.cancel();recognizer.destroy();recognizer=null; }
-        if(capture!=null){capture.close();capture=null;}
-        tts.stop();abandonFocus();listener.cancel();listener.status(message);
+        active=false;thinking=false;listening=false;warmed=false;generation=UUID.randomUUID().toString();main.removeCallbacksAndMessages(null);
+        SpeechRecognizer current=recognizer;recognizer=null;AudioCapture currentCapture=capture;capture=null;
+        background(()->{
+            if(current!=null){try{current.cancel();current.destroy();}catch(RuntimeException ignored){}}
+            if(currentCapture!=null)currentCapture.close();
+            try{tts.stop();}catch(RuntimeException ignored){}
+            abandonFocus();
+        });
+        listener.cancel();listener.status(message);
     }
+    /** Never let an engine call block the UI thread; fall back inline only if the worker is gone. */
+    private void background(Runnable task){try{worker.execute(task);}catch(java.util.concurrent.RejectedExecutionException e){task.run();}}
     private void abandonFocus() { if(focus!=null){audio.abandonAudioFocusRequest(focus);focus=null;} }
     public boolean permission(int code,int[] results) {
         if(code!=PERMISSION)return false;if(results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)start();else listener.status("Microphone access is off. Enable it in app settings to talk.");return true;
@@ -142,5 +171,5 @@ public final class VoiceSession implements AutoCloseable {
         if(code!=RECOGNITION)return false;external=false;if(!generation.equals(externalGeneration))return true;
         if(result==Activity.RESULT_OK && data!=null)result(data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS));else pause("Voice input cancelled.");return true;
     }
-    @Override public void close() { if(closed)return;pause("Paused");closed=true;tts.shutdown(); }
+    @Override public void close() { if(closed)return;pause("Paused");closed=true;background(()->tts.shutdown());try{worker.shutdown();}catch(RuntimeException ignored){} }
 }

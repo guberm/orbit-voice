@@ -111,6 +111,13 @@ public final class MainActivity extends Activity implements MessageClient.OnMess
             if(kind.equals("delta")||kind.equals("done")){if(kind.equals("done"))main.removeCallbacks(timeout);voice.update(text,kind.equals("done"));}
         });
     }
+    @Override protected void onNewIntent(Intent intent){
+        super.onNewIntent(intent);setIntent(intent);
+        if(!intent.getBooleanExtra("start_voice",false))return;
+        // The tile and the watch-face shortcut relaunch this task; only the first launch arrives in onCreate.
+        if(account.isEmpty()||conversation.isEmpty()){autoStart=true;if(started)discover();}
+        else if(!voice.active())voice.start();
+    }
     @Override public void onRequestPermissionsResult(int code,String[] permissions,int[] grants){super.onRequestPermissionsResult(code,permissions,grants);voice.permission(code,grants);}
     @Override protected void onActivityResult(int code,int result,Intent data){super.onActivityResult(code,result,data);voice.activityResult(code,result,data);}
     @Override protected void onStop(){started=false;Wearable.getMessageClient(this).removeListener(this);if(!voice.inExternalRecognizer())voice.pause("Paused");super.onStop();}
