@@ -1,0 +1,32 @@
+android {
+    compileSdk 36
+    defaultConfig {
+        applicationId 'dev.orbitvoice.app'
+        minSdk 30
+        targetSdk 36
+        versionCode 1
+        versionName '0.1.0-alpha.1'
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_11; targetCompatibility JavaVersion.VERSION_11 }
+    def signingFile = new File(System.getProperty('user.home'), '.android/orbit-voice-signing.properties')
+    def signingProps = new Properties()
+    if (signingFile.exists()) signingFile.withInputStream { signingProps.load(it) }
+    signingConfigs {
+        release {
+            if (signingFile.exists()) {
+                storeFile file(signingProps['storeFile'])
+                storePassword signingProps['storePassword']
+                keyAlias signingProps['keyAlias']
+                keyPassword signingProps['keyPassword']
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (signingFile.exists()) signingConfig signingConfigs.release
+        }
+    }
+    lint { abortOnError true; checkReleaseBuilds true }
+}
+dependencies { implementation project(':common') }
